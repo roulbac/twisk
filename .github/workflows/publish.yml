@@ -1,17 +1,74 @@
-name: Publish to PyPI
+name: Release
 
-# Run by hand (Actions → Publish to PyPI → Run workflow) after bumping the
-# version in pyproject.toml and src/twisk/__init__.py. Uses PyPI Trusted
-# Publishing (OIDC) — no API token stored in the repo.
+# Actions → Release → Run workflow. Releases the version in pyproject.toml at
+# `commit` (default: the tip of main):
+#   1. checks CHANGELOG.md on main has notes for that version (no notes, no release)
+#   2. tests and builds that commit
+#   3. publishes it to PyPI (Trusted Publishing; a version already there is skipped)
+#   4. tags it vX.Y.Z and creates the GitHub Release with those notes
+# Running it again for a released version only fills in a missing tag/Release.
 on:
   workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit on main to release (default: tip of main)"
+        required: false
+        default: ""
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: meta
+        name: Resolve commit, version and release notes
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --verify "${COMMIT:-origin/main}^{commit}")
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$sha is not on main"; exit 1
+          fi
+          version=$(git show "$sha:pyproject.toml" | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          [ -n "$version" ] || { echo "::error::no version in pyproject.toml at $sha"; exit 1; }
+          init=$(git show "$sha:src/twisk/__init__.py" | sed -n 's/^__version__ = "\(.*\)"/\1/p')
+          [ "$init" = "$version" ] || { echo "::error::__version__ ($init) != pyproject version ($version)"; exit 1; }
+          # Notes: the "## [X.Y.Z]" section of CHANGELOG.md on main.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {on=1; next}
+            on && /^## \[/ {exit}
+            on && /^\[[^]]+\]: / {exit}
+            on {print}
+          ' CHANGELOG.md | sed -e '/./,$!d' > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no notes for $version — add a '## [$version]' section first"; exit 1
+          fi
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null && [ "$(git rev-parse "$tag^{commit}")" != "$sha" ]; then
+            echo "::error::tag $tag already exists on a different commit"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version from $sha"; cat notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
   test:
-    if: github.ref == 'refs/heads/main'
+    needs: prepare
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
@@ -19,10 +76,12 @@ jobs:
       - run: uv run pytest -q
 
   build:
-    needs: test
+    needs: [prepare, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
       - uses: astral-sh/setup-uv@v6
       - run: uv build
       - run: uvx twine check --strict dist/*
@@ -45,3 +104,35 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  github-release:
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: notes
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Tag and create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+          else
+            pre=""
+            case "$VERSION" in *a*|*b*|*rc*|*dev*) pre="--prerelease" ;; esac
+            gh release create "$tag" dist/* --target "$SHA" --title "twisk $VERSION" --notes-file notes.md $pre
+          fi

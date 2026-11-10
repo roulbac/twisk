@@ -14,8 +14,10 @@ uv run twisk templates list  # form templates (built-in + ~/.twisk/templates); `
 uv sync --group docs && uv run python scripts/capture_screenshots.py   # README screenshots + GIF
 ```
 
-Releasing to PyPI: bump `version` in `pyproject.toml` and `__version__` in `src/twisk/__init__.py`, push to main,
-then run the "Publish to PyPI" workflow (`.github/workflows/publish.yml`, Trusted Publishing, environment `pypi`).
+Releasing: bump `version` in `pyproject.toml` and `__version__` in `src/twisk/__init__.py`, add a `## [X.Y.Z]`
+section to `CHANGELOG.md`, push to main, then run the "Release" workflow (`.github/workflows/publish.yml` — keep the
+file name, PyPI's Trusted Publisher is bound to it; environment `pypi`). It refuses to release without changelog
+notes, publishes to PyPI, then tags `vX.Y.Z` and creates the GitHub Release with those notes.
 
 After UI changes, regenerate `docs/assets/` with the capture script (it uses the demo backend; the demo data
 lives in `backend/fake.py` and `seed_specs()` in the script) and look at the GIF before committing.

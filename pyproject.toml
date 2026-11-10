@@ -37,6 +37,7 @@ dependencies = [
 Homepage = "https://github.com/roulbac/twisk"
 Repository = "https://github.com/roulbac/twisk"
 Issues = "https://github.com/roulbac/twisk/issues"
+Changelog = "https://github.com/roulbac/twisk/blob/main/CHANGELOG.md"
 
 [project.scripts]
 twisk = "twisk.cli:app"
