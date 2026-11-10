@@ -1,0 +1,71 @@
+[project]
+name = "twisk"
+version = "0.1.0"
+description = "A k9s-style terminal UI for SkyPilot: clusters, managed jobs, services and volumes without hand-written YAML"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Reda Oulbacha" }]
+requires-python = ">=3.10,<3.14"
+keywords = ["skypilot", "tui", "k9s", "ml", "gpu", "kubernetes", "cloud"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Clustering",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "textual>=8,<9",
+    "rich>=13",
+    "pydantic>=2,<3",
+    "pyyaml>=6,<7",
+    "jinja2>=3.1,<4",  # form templates (~/.twisk/templates)
+    "typer>=0.12",
+    # Client side of SkyPilot. Keep the minor in lock-step with the API
+    # server image used by `twisk sandbox` (see sandbox.py).
+    "skypilot>=0.14.2,<0.15",
+]
+
+[project.urls]
+Homepage = "https://github.com/roulbac/twisk"
+Repository = "https://github.com/roulbac/twisk"
+Issues = "https://github.com/roulbac/twisk/issues"
+
+[project.scripts]
+twisk = "twisk.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-timeout>=2",
+]
+# Only for regenerating README screenshots (scripts/capture_screenshots.py).
+docs = [
+    "playwright>=1.40",
+    "pillow>=10",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "twisk"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+timeout = 60
+markers = [
+    "sandbox: end-to-end tests against a live `twisk sandbox` (deselect with '-m \"not sandbox\"')",
+]
+addopts = "-m 'not sandbox'"

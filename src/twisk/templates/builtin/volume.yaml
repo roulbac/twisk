@@ -1,0 +1,40 @@
+# Built-in form for volumes (sky volumes apply).
+kind: volume
+title: Volume
+description: Persistent disk (Kubernetes PVC or network volume) to mount into clusters and jobs
+fields:
+  - {key: name, label: Volume name, required: true, placeholder: datasets}
+  - key: type
+    label: Type
+    type: select
+    path: type
+    default: k8s-pvc
+    options:
+      - {label: Kubernetes PVC (k8s-pvc), value: k8s-pvc}
+      - {label: RunPod network volume, value: runpod-network-volume}
+  - {key: infra, label: Infra, path: infra, default: k8s, placeholder: k8s, suggest: [k8s, kubernetes, runpod],
+     help: "k8s, k8s/<context>, runpod/<region>…"}
+  - {key: size, label: Size, path: size, required: true, default: 1Gi, placeholder: 10Gi, help: "e.g. 10Gi, 100GB"}
+  - {key: storage_class, label: Storage class, section: Kubernetes, path: config.storage_class_name, placeholder: cluster default}
+  - key: access_mode
+    label: Access mode
+    type: select
+    section: Kubernetes
+    path: config.access_mode
+    default: ""
+    options:
+      - {label: Default (ReadWriteOnce), value: ""}
+      - {label: ReadWriteOnce, value: ReadWriteOnce}
+      - {label: ReadWriteMany, value: ReadWriteMany}
+      - {label: ReadOnlyMany, value: ReadOnlyMany}
+      - {label: ReadWriteOncePod, value: ReadWriteOncePod}
+  - {key: labels, label: Labels, type: kv, section: Kubernetes, path: labels, help: "key=value, one per line"}
+template: |
+  name: {{ name }}
+  type: {{ type | yaml }}
+  infra: {{ infra | yaml }}
+  size: {{ size | yaml }}
+  config:
+    storage_class_name: {{ storage_class | yaml }}
+    access_mode: {{ access_mode | yaml }}
+  labels: {{ labels | yaml }}

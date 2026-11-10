@@ -1,0 +1,73 @@
+# Built-in form for SkyServe services (sky serve up).
+kind: service
+title: Service
+description: Autoscaled model or API endpoint behind a load balancer (sky serve up)
+fields:
+  - {key: name, label: Service name, required: true, placeholder: llm-api}
+
+  - {key: infra, label: Infra, section: Resources, path: resources.infra, suggest: infra,
+     placeholder: auto (cheapest enabled), help: "k8s, aws, gcp/us-central1, k8s/my-context … empty = let SkyPilot choose"}
+  - {key: accelerators, label: Accelerators, section: Resources, path: resources.accelerators, suggest: accelerators,
+     placeholder: none, help: "GPU/TPU as NAME:COUNT, e.g. A100:1, H100:8"}
+  - {key: cpus, label: vCPUs, section: Resources, path: resources.cpus, default: "1", placeholder: default,
+     help: "number, or N+ for 'at least N'"}
+  - {key: memory, label: Memory (GB), section: Resources, path: resources.memory, default: "2", placeholder: default,
+     help: "number, or N+ for 'at least N'"}
+  - {key: disk_size, label: Disk (GB), type: int, min: 1, section: Resources, path: resources.disk_size, placeholder: default}
+  - {key: use_spot, label: Use spot/preemptible, type: bool, section: Resources, path: resources.use_spot}
+  - {key: image_id, label: Image, section: Resources, path: resources.image_id, placeholder: SkyPilot default,
+     help: "docker:<image> for containers, or a cloud image id"}
+  - {key: ports, label: Extra ports, type: list, section: Resources, placeholder: none,
+     help: "extra ports to open on replicas (the service port is opened for you)"}
+
+  - {key: port, label: Service port, type: int, min: 1, max: 65535, required: true, default: 8080, section: Service,
+     path: service.ports, help: the port your server listens on; the load balancer forwards to it}
+  - {key: readiness_path, label: Readiness path, section: Service, path: service.readiness_probe.path, default: /,
+     placeholder: /, help: HTTP GET path that returns 200 when ready}
+  - {key: initial_delay_seconds, label: Readiness grace (s), type: int, min: 0, section: Service, default: 300,
+     path: service.readiness_probe.initial_delay_seconds, placeholder: "1200"}
+  - {key: min_replicas, label: Replicas (min), type: int, min: 0, section: Service, default: 1,
+     path: service.replicas|service.replica_policy.min_replicas, placeholder: "1"}
+  - {key: max_replicas, label: Max replicas, type: int, min: 1, section: Service, path: service.replica_policy.max_replicas,
+     placeholder: no autoscaling, help: set to enable autoscaling}
+  - {key: target_qps_per_replica, label: Target QPS / replica, type: float, section: Service,
+     path: service.replica_policy.target_qps_per_replica, placeholder: "-", help: "autoscaling target, required with max replicas"}
+
+  - {key: num_nodes, label: Nodes, type: int, min: 1, section: Workload, path: num_nodes, placeholder: "1"}
+  - {key: workdir, label: Workdir, section: Workload, path: workdir, placeholder: none,
+     help: "local directory synced to ~/sky_workdir (absolute path or ~/…)"}
+  - {key: setup, label: Setup commands, type: area, section: Workload, path: setup, help: runs once when nodes are provisioned}
+  - {key: run, label: Run command, type: area, section: Workload, path: run, required: true,
+     default: python3 -m http.server 8080, help: the command that starts your server}
+
+  - {key: envs, label: Environment, type: kv, section: Environment & storage, path: envs, help: "KEY=value, one per line"}
+  - {key: volumes, label: Volume mounts, type: kv, section: Environment & storage, path: volumes, suggest: volumes,
+     help: "/mount/path=volume-name, one per line (see :volumes)"}
+template: |
+  name: {{ name }}
+  service:
+    ports: {{ port }}
+    readiness_probe: {path: {{ readiness_path | yaml }}, initial_delay_seconds: {{ initial_delay_seconds | yaml }}}
+  {% if max_replicas is none %}
+    replicas: {{ min_replicas | yaml }}
+  {% else %}
+    replica_policy:
+      min_replicas: {{ min_replicas | yaml }}
+      max_replicas: {{ max_replicas }}
+      target_qps_per_replica: {{ target_qps_per_replica | yaml }}
+  {% endif %}
+  resources:
+    infra: {{ infra | yaml }}
+    accelerators: {{ accelerators | yaml }}
+    cpus: {{ cpus | yaml }}
+    memory: {{ memory | yaml }}
+    disk_size: {{ disk_size | yaml }}
+    use_spot: {{ use_spot | yaml }}
+    image_id: {{ image_id | yaml }}
+    ports: {{ ([port | string] + (ports or [])) | yaml }}
+  num_nodes: {{ num_nodes | yaml }}
+  workdir: {{ workdir | yaml }}
+  envs: {{ envs | yaml }}
+  volumes: {{ volumes | yaml }}
+  setup: {{ setup | yaml }}
+  run: {{ run | yaml }}
