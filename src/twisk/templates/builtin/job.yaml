@@ -43,7 +43,7 @@ fields:
   - {key: run, label: Run command, type: area, section: Workload, path: run, required: true,
      default: "echo \"hello from a managed job\"; sleep 30", help: the main command}
 
-  - {key: envs, label: Environment, type: kv, section: Environment & storage, path: envs, help: "KEY=value, one per line"}
+  - {key: envs, label: Environment, type: kv, section: Environment & storage, path: envs, help: "KEY=value, one per line; indent 2 spaces to continue a value"}
   - {key: volumes, label: Volume mounts, type: kv, section: Environment & storage, path: volumes, suggest: volumes,
      help: "/mount/path=volume-name, one per line (see :volumes)"}
 template: |

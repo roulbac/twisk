@@ -22,7 +22,7 @@ from textual.widgets import DataTable, Input, Static
 from textual.worker import Worker, WorkerState
 
 from twisk.backend.base import BackendError, RequestRow, ServerInfo
-from twisk.specs.models import ClusterSpec, Spec, SpecKind, spec_from_yaml
+from twisk.specs.models import ClusterSpec, Spec, SpecKind, set_block_styles, spec_from_yaml
 from twisk.specs.store import StoredSpec, _short_error
 from twisk.tui.screens.detail import DetailScreen, describe_table, yaml_block
 from twisk.tui.screens.dialogs import (
@@ -612,7 +612,7 @@ class MainScreen(Screen):
                 return
             template = choices[0] if choices else registry.default(kind)
 
-        values = base_values = base_data = None
+        values = base_values = base_data = base_styles = None
         if spec is not None:
             stored_template, stored_values = self.app.store.form_meta(kind, spec.name)
             if template is None:
@@ -625,6 +625,7 @@ class MainScreen(Screen):
                 values = prefill(template, spec)
             base_values = dict(values)
             base_data = spec.to_yaml_dict()
+            base_styles = spec._block_styles
 
         def cb(result: FormResult | None) -> None:
             if result is not None:
@@ -637,7 +638,7 @@ class MainScreen(Screen):
             label = "Relaunch"
         self.app.push_screen(
             FormScreen(template, values, editing=editing, base_data=base_data, base_values=base_values,
-                       launch_label=label, **self._form_context()),
+                       base_styles=base_styles, launch_label=label, **self._form_context()),
             cb,
         )
 
@@ -1171,7 +1172,7 @@ class MainScreen(Screen):
                 return
             try:
                 new = row.spec.model_copy(update={"name": name})
-                new = type(new).model_validate(new.model_dump())
+                new = set_block_styles(type(new).model_validate(new.model_dump()), row.spec._block_styles)
             except Exception as exc:  # noqa: BLE001
                 self.notify(f"Invalid name: {_short_error(exc)}", severity="error")
                 return

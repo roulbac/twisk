@@ -263,7 +263,7 @@ those five fields, with the rendered YAML live next to them.
 | | |
 |---|---|
 | `key` | variable name in the template (letters, digits, `_`) |
-| `type` | `text` · `area` (multi-line) · `int` · `float` · `bool` · `select` · `list` (comma-separated → list) · `kv` (`KEY=value` lines → mapping) |
+| `type` | `text` · `area` (multi-line) · `int` · `float` · `bool` · `select` · `list` (comma-separated → list) · `kv` (`KEY=value` lines → mapping; indent a line by 2 spaces to continue a multi-line value) |
 | `label`, `section`, `help`, `placeholder` | how it shows in the form (fields are grouped by `section`) |
 | `default`, `required` | starting value; required fields can't be left empty |
 | `options` | for `select`: `[a, b]` or `[{label: …, value: …}]` (a value of `""` means "leave it out") |

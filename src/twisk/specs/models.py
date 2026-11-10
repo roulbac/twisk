@@ -9,12 +9,13 @@ through the forms.
 
 from __future__ import annotations
 
+import copy
 import re
 from enum import Enum
 from typing import Any, ClassVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 NAME_RE = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 _CPU_MEM_RE = re.compile(r"^\d+(\.\d+)?\+?$")
@@ -64,24 +65,42 @@ def _num_or_str(value: str) -> int | float | str:
 
 
 def parse_kv_lines(text: str) -> dict[str, str]:
-    """Parse ``KEY=value`` lines (blank lines and ``#`` comments ignored)."""
+    """Parse ``KEY=value`` lines (blank lines and ``#`` comments ignored).
+
+    A line indented by two or more spaces (or a tab) continues the previous
+    value on a new line, so multi-line values fit::
+
+        NOTE=line one
+          line two
+    """
     out: dict[str, str] = {}
+    current: str | None = None
     for raw in (text or "").splitlines():
+        if current is not None and raw.startswith(("  ", "\t")):
+            out[current] += "\n" + (raw[2:] if raw.startswith("  ") else raw[1:])
+            continue
         line = raw.strip()
         if not line or line.startswith("#"):
+            current = None
             continue
         if "=" not in line:
-            raise ValueError(f"expected KEY=value, got {line!r}")
+            raise ValueError(f"expected KEY=value, got {line!r} (indent a line by two spaces to continue a value)")
         key, val = line.split("=", 1)
         key = key.strip()
         if not key:
             raise ValueError(f"empty key in {line!r}")
         out[key] = val.strip()
-    return out
+        current = key
+    return {k: v.rstrip() if "\n" in v else v for k, v in out.items()}
 
 
 def format_kv_lines(data: dict[str, Any]) -> str:
-    return "\n".join(f"{k}={v}" for k, v in (data or {}).items())
+    lines = []
+    for k, v in (data or {}).items():
+        first, *rest = str(v).rstrip("\n").split("\n")
+        lines.append(f"{k}={first}")
+        lines.extend(f"  {r}" for r in rest)
+    return "\n".join(lines)
 
 
 def parse_mount_lines(text: str) -> dict[str, str]:
@@ -222,6 +241,8 @@ _TASK_KNOWN = ("name", "resources", "num_nodes", "workdir", "setup", "run", "env
 
 
 class _TaskSpec(BaseModel):
+    # Where the source YAML used block scalars (`|` / `>`), so to_yaml writes them back the same way.
+    _block_styles: dict[tuple, str] = PrivateAttr(default_factory=dict)
     """Fields shared by clusters, managed jobs and services (all SkyPilot tasks)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -264,9 +285,9 @@ class _TaskSpec(BaseModel):
         if self.volumes:
             out["volumes"] = dict(self.volumes)
         if self.setup:
-            out["setup"] = _literal(self.setup)
+            out["setup"] = self.setup
         if self.run:
-            out["run"] = _literal(self.run)
+            out["run"] = self.run
         out.update(self.extra)
         return out
 
@@ -286,7 +307,11 @@ class _TaskSpec(BaseModel):
         return kwargs, {"special": special, "rest": data}
 
     def to_yaml(self) -> str:
-        return dump_yaml(self.to_yaml_dict())
+        return dump_yaml(apply_block_styles(self.to_yaml_dict(), self._block_styles))
+
+    def __eq__(self, other: object) -> bool:
+        # YAML formatting (block styles) isn't part of a spec's value.
+        return type(self) is type(other) and self.model_dump() == other.model_dump()  # type: ignore[union-attr]
 
     def to_yaml_dict(self) -> dict[str, Any]:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -514,6 +539,7 @@ class PoolSpec(_TaskSpec):
 
 
 class VolumeSpec(BaseModel):
+    _block_styles: dict[tuple, str] = PrivateAttr(default_factory=dict)
     """A SkyPilot volume (``sky volumes apply``)."""
 
     model_config = ConfigDict(extra="forbid")
@@ -573,7 +599,11 @@ class VolumeSpec(BaseModel):
         return out
 
     def to_yaml(self) -> str:
-        return dump_yaml(self.to_yaml_dict())
+        return dump_yaml(apply_block_styles(self.to_yaml_dict(), self._block_styles))
+
+    def __eq__(self, other: object) -> bool:
+        # YAML formatting (block styles) isn't part of a spec's value.
+        return type(self) is type(other) and self.model_dump() == other.model_dump()  # type: ignore[union-attr]
 
     @classmethod
     def from_yaml_dict(cls, name: str, data: dict[str, Any]) -> "VolumeSpec":
@@ -662,29 +692,116 @@ def spec_from_yaml(kind: SpecKind, name: str, text: str) -> Spec:
         pool = read_meta(text).get("pool")
         if pool:
             spec = JobSpec.model_validate({**spec.model_dump(), "pool": pool})
-    return spec
+    return set_block_styles(spec, block_styles(text))
 
 
 # ── YAML rendering ──────────────────────────────────────────────
 
 
-class _Literal(str):
-    """Marker for strings that should render as YAML block scalars."""
+class _Styled(str):
+    """A string to render as a YAML block scalar (``|`` literal or ``>`` folded)."""
+
+    style = "|"
+
+    def __new__(cls, text: str, style: str = "|") -> "_Styled":
+        obj = super().__new__(cls, text)
+        obj.style = style
+        return obj
 
 
-def _literal(text: str) -> str:
-    return _Literal(text if text.endswith("\n") else text + "\n") if "\n" in text.strip() else text
+# setup / run are always written as `|` blocks, even a single line.
+_ALWAYS_LITERAL = (("setup",), ("run",))
 
 
 class _Dumper(yaml.SafeDumper):
     pass
 
 
-def _literal_repr(dumper: yaml.SafeDumper, data: _Literal):
-    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+def _styled_repr(dumper: yaml.SafeDumper, data: _Styled):
+    # PyYAML quietly falls back to a quoted scalar when a block can't hold the
+    # text (e.g. trailing spaces on a line): still the same value.
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style=data.style)
 
 
-_Dumper.add_representer(_Literal, _literal_repr)
+_Dumper.add_representer(_Styled, _styled_repr)
+
+
+def block_styles(text: str) -> dict[tuple, str]:
+    """Paths of the scalars written as ``|`` or ``>`` blocks in YAML text."""
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return {}
+    found: dict[tuple, str] = {}
+
+    def walk(node: Any, path: tuple) -> None:
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                if isinstance(key, yaml.ScalarNode):
+                    walk(value, (*path, key.value))
+        elif isinstance(node, yaml.SequenceNode):
+            for i, value in enumerate(node.value):
+                walk(value, (*path, i))
+        elif isinstance(node, yaml.ScalarNode) and node.style in ("|", ">") and path:
+            found[path] = node.style
+
+    if root is not None:
+        walk(root, ())
+    return found
+
+
+def set_block_styles(spec: Any, styles: dict[tuple, str]) -> Any:
+    spec._block_styles = dict(styles)
+    return spec
+
+
+def apply_block_styles(data: dict[str, Any], styles: dict[tuple, str]) -> dict[str, Any]:
+    """Re-apply recorded block styles to a YAML mapping (strings at those paths only).
+
+    Only for writing twisk's own files: the result holds str subclasses that
+    generic YAML dumpers can't serialize, so never hand it to SkyPilot.
+    """
+    styles = {**styles, **{path: "|" for path in _ALWAYS_LITERAL}}
+    data = copy.deepcopy(data)
+    for path, style in styles.items():
+        parent: Any = data
+        for part in path[:-1]:
+            parent = _child(parent, part)
+            if parent is None:
+                break
+        if parent is None:
+            continue
+        key = _key_in(parent, path[-1])
+        if key is _NO_KEY:
+            continue
+        value = parent[key]
+        if isinstance(value, str) and value and not isinstance(value, _Styled):
+            if path in _ALWAYS_LITERAL and not value.endswith("\n"):
+                value += "\n"  # `|`, not `|-`
+            parent[key] = _Styled(value, style)
+    return data
+
+
+_NO_KEY = object()
+
+
+def _key_in(container: Any, part: Any) -> Any:
+    if isinstance(container, dict):
+        if part in container:
+            return part
+        # YAML keys like `8080:` load as ints; the path recorded the text.
+        return next((k for k in container if str(k) == str(part)), _NO_KEY)
+    if isinstance(container, list) and isinstance(part, int) and 0 <= part < len(container):
+        return part
+    return _NO_KEY
+
+
+def _child(container: Any, part: Any) -> Any:
+    key = _key_in(container, part)
+    if key is _NO_KEY:
+        return None
+    value = container[key]
+    return value if isinstance(value, (dict, list)) else None
 
 
 def dump_yaml(data: dict[str, Any]) -> str:

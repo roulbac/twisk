@@ -58,6 +58,7 @@ class FormScreen(Screen[FormResult | None]):
         editing: bool = False,
         base_data: dict[str, Any] | None = None,
         base_values: dict[str, Any] | None = None,
+        base_styles: dict[tuple, str] | None = None,
         launch_label: str | None = None,
         suggestions: dict[str, list[str]] | None = None,
     ) -> None:
@@ -70,6 +71,7 @@ class FormScreen(Screen[FormResult | None]):
         # from, for a three-way merge that keeps hand edits made in YAML.
         self.base_data = base_data
         self.base_values = base_values
+        self.base_styles = base_styles
         self.launch_label = launch_label or LAUNCH_LABEL[template.kind]
         self.suggestions = suggestions or {}
         self._show_errors = False  # after the first submit, keep errors live
@@ -191,7 +193,8 @@ class FormScreen(Screen[FormResult | None]):
         return out
 
     def _build(self):
-        return materialize(self.template, self.collect(), base_data=self.base_data, base_values=self.base_values)
+        return materialize(self.template, self.collect(), base_data=self.base_data, base_values=self.base_values,
+                           base_styles=self.base_styles)
 
     def _refresh_preview(self, show_errors: bool = False):
         self._show_errors = self._show_errors or show_errors

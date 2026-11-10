@@ -22,7 +22,16 @@ from jinja2 import TemplateSyntaxError, Undefined
 from jinja2.sandbox import SandboxedEnvironment
 from pydantic import ValidationError
 
-from twisk.specs.models import SPEC_TYPES, JobSpec, Spec, SpecKind, format_kv_lines, parse_kv_lines
+from twisk.specs.models import (
+    SPEC_TYPES,
+    JobSpec,
+    Spec,
+    SpecKind,
+    block_styles,
+    format_kv_lines,
+    parse_kv_lines,
+    set_block_styles,
+)
 from twisk.templates.model import Template, TemplateError, TemplateField
 
 _MISSING = object()
@@ -142,8 +151,11 @@ def _bounds(f: TemplateField, value: float) -> None:
 # ── rendering ───────────────────────────────────────────────
 
 
-def render(template: Template, values: dict[str, Any]) -> dict[str, Any]:
-    """Render the template with typed values → pruned YAML mapping."""
+def render(template: Template, values: dict[str, Any], styles: dict[tuple, str] | None = None) -> dict[str, Any]:
+    """Render the template with typed values → pruned YAML mapping.
+
+    ``styles``, if given, receives the paths the template wrote as ``|``/``>`` blocks.
+    """
     try:
         text = compile_template(template.template).render(**values)
     except TemplateError:
@@ -157,6 +169,8 @@ def render(template: Template, values: dict[str, Any]) -> dict[str, Any]:
         raise TemplateError(f"template rendered invalid YAML: {' '.join(first[:2])}") from exc
     if not isinstance(data, dict):
         raise TemplateError("template must render a YAML mapping")
+    if styles is not None:
+        styles.update(block_styles(text))
     return prune(data)
 
 
@@ -231,8 +245,10 @@ def materialize(
     *,
     base_data: dict[str, Any] | None = None,
     base_values: dict[str, Any] | None = None,
+    base_styles: dict[tuple, str] | None = None,
 ) -> Result:
-    """Raw form values → spec. ``base_*`` describe the spec being edited, if any."""
+    """Raw form values → spec. ``base_*`` describe the spec being edited, if any
+    (``base_styles``: where its YAML used ``|``/``>`` blocks, kept on re-save)."""
     values, errors = coerce(template, raw)
     if errors:
         # Still validate the rest, so every problem shows at once: render with
@@ -241,12 +257,12 @@ def materialize(
         trial = dict(values)
         if "name" in errors:
             trial["name"] = "x"
-        probe = _build(template, trial, None, None)
+        probe = _build(template, trial, None, None, None)
         for key, msg in probe.errors.items():
             if key not in errors and key != "_form":
                 errors[key] = msg
         return Result(None, {}, values, errors)
-    return _build(template, values, base_data, base_values)
+    return _build(template, values, base_data, base_values, base_styles)
 
 
 def _build(
@@ -254,10 +270,12 @@ def _build(
     values: dict[str, Any],
     base_data: dict[str, Any] | None,
     base_values: dict[str, Any] | None,
+    base_styles: dict[tuple, str] | None,
 ) -> Result:
     name = values.get("name") or ""
+    styles: dict[tuple, str] = dict(base_styles or {})
     try:
-        data = render(template, values)
+        data = render(template, values, styles)
     except TemplateError as exc:
         return Result(None, {}, values, {"_form": str(exc)})
     data.pop("name", None)
@@ -274,6 +292,7 @@ def _build(
         spec = SPEC_TYPES[template.kind].from_yaml_dict(name, dict(data))
         if isinstance(spec, JobSpec) and "pool" in meta:
             spec = JobSpec.model_validate({**spec.model_dump(), "pool": meta["pool"]})
+        set_block_styles(spec, styles)
     except ValidationError as exc:
         return Result(None, data, values, map_errors(template, exc))
     except (ValueError, TypeError) as exc:

@@ -1,6 +1,6 @@
 [project]
 name = "twisk"
-version = "0.1.0"
+version = "0.1.1"
 description = "A k9s-style terminal UI for SkyPilot: clusters, managed jobs, services and volumes without hand-written YAML"
 readme = "README.md"
 license = "Apache-2.0"

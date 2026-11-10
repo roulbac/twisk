@@ -28,7 +28,7 @@ fields:
   - {key: setup, label: Setup commands, type: area, section: Workload, path: setup, default: "echo \"worker ready\"",
      help: runs once on each worker; jobs submitted to the pool run afterwards}
 
-  - {key: envs, label: Environment, type: kv, section: Environment & storage, path: envs, help: "KEY=value, one per line"}
+  - {key: envs, label: Environment, type: kv, section: Environment & storage, path: envs, help: "KEY=value, one per line; indent 2 spaces to continue a value"}
   - {key: volumes, label: Volume mounts, type: kv, section: Environment & storage, path: volumes, suggest: volumes,
      help: "/mount/path=volume-name, one per line (see :volumes)"}
 template: |
