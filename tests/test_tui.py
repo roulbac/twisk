@@ -34,7 +34,15 @@ def make_app(backend, store, view="clusters"):
 
 
 async def settle(pilot, seconds=0.4):
+    """Let the UI run for ``seconds``, then also wait (up to 10s) for the main
+    screen's current view to have its first data. A fixed pause alone flakes on
+    slow CI runners, where the first fetch can take longer than the pause."""
     await pilot.pause(seconds)
+    for _ in range(100):
+        screen = pilot.app.screen
+        if not isinstance(screen, MainScreen) or screen._loaded_once:
+            return
+        await pilot.pause(0.1)
 
 
 def table_names(app) -> list[str]:
@@ -706,7 +714,7 @@ def title_text(app) -> str:
 async def test_slow_server_loads_and_shows_progress(store):
     app = make_app(SlowBackend(speed=40), store)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot, 0.3)
+        await pilot.pause(0.3)  # not settle(): this checks the state *before* data arrives
         empty = app.screen.query_one("#empty")
         # Never claims "No clusters" before the first answer.
         assert empty.display and "Loading clusters" in str(empty.render())
